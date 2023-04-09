@@ -125,12 +125,15 @@ def getSubmitted(TOKEN):
 
 
 def ignoreSubmited(hws_json, TOKEN):
+    title = "Homework submited"
     submitted = getSubmitted(TOKEN)
     if submitted == None:
         return hws_json
     for hw in hws_json:
         if hw in submitted:
             del hws_json[hw]
+            body = f"Assignment {hw} has been submited"
+            pushbullet_noti(title, body, TOKEN)
     return hws_json
 
 
