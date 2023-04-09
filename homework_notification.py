@@ -15,9 +15,10 @@ def get_tz():
 
 # get calendar events from brightspace ics
 def get_cal_events(token):
+    timeout = httpx.Timeout(10, connect=10, read=10, write=10)
     url = 'https://udla.brightspace.com/d2l/le/calendar/feed/user/feed.ics'
     querystring = {'token': token}
-    homework = httpx.get(url, params=querystring)
+    homework = httpx.get(url, params=querystring,timeout=timeout)
     calendar = Calendar().from_ical(homework.text)
     return calendar
 
@@ -30,29 +31,52 @@ def get_homework(calendar, time_delta):
         if (component.name == "VEVENT") and (component.decoded("dtend") > datetime.now().astimezone()) and (
                 component.decoded("dtend") < today.astimezone() + timedelta(days=time_delta)):
             homework = {}
-            homework[str(component.get('UID'))] = {
+            homework[str(component.get('UID'))[:-21]] = {
                 'COURSE': re.compile(r'(?<=-)(.*)(?=-)(.*)').findall(str(component.get("location")))[0][1][1:],
                 'ASSIGMENT': str(component.get("summary")),
-                'INIT_TIME': component.decoded('dtstart').astimezone(get_tz()),
-                'END_TIME': component.decoded('dtend').astimezone(get_tz()),
+                'INIT_TIME': component.decoded('dtstart').astimezone(get_tz()).strftime('%Y-%m-%d %H:%M:%S'),
+                'END_TIME': component.decoded('dtend').astimezone(get_tz()).strftime('%Y-%m-%d %H:%M:%S'),
                 'DESCRIPTION': str(component.get("description")),
                 'SEQUENCE': component.get("sequence"),
-                'LAST-MODIFIED': component.get("last-modified").dt.astimezone(get_tz()),
-                'DTSTAMP': component.get("dtstamp").dt.astimezone(get_tz()),
+                'LAST-MODIFIED': component.get("last-modified").dt.astimezone(get_tz()).strftime('%Y-%m-%d %H:%M:%S'),
+                'DTSTAMP': component.get("dtstamp").dt.astimezone(get_tz()).strftime('%Y-%m-%d %H:%M:%S'),
                 'DL_TIME': component.decoded('dtend').astimezone(get_tz()) - datetime.now().astimezone(get_tz())
             }
             hws_json.update(homework)
+    try:
+        with open('pushes.json', 'r') as f:
+            pushes = json.load(f)
+        for hw in hws_json:
+            if hw not in pushes:
+                pushes[hw] = {"lastPush":None, "next_push":None}
+
+    except FileNotFoundError:
+        pushes = {}
+        for hw in hws_json:
+            pushes[hw] = {"lastPush":None, "next_push":None}
+
+
+    save_json('pushes.json', pushes)
+
+
+    
     return hws_json
 
 
 
 def get_hw_info(hw, hws_json):
-    hws_json[hw]['DL_TIME'] = hws_json[hw]['END_TIME'] - datetime.now().astimezone(get_tz())
+    end_time = hws_json[hw]['END_TIME']
+    hws_json[hw]['DL_TIME'] = datetime.strptime(end_time, '%Y-%m-%d %H:%M:%S').astimezone(get_tz())  - datetime.now().astimezone(get_tz())
     dl_time = hws_json[hw]['DL_TIME']
     time = str(dl_time.days)+'+'+' '+str(round(dl_time.total_seconds()/3600, 2))
     title = time+'  '+ hws_json[hw]['COURSE']
     body = hw+'\n'+hws_json[hw]['DESCRIPTION']
     return title, body
+
+
+def save_json(name, jsonfile):
+    with open(name, 'w') as f:
+        json.dump(jsonfile, f)
 
 
 # send notification to pushbullet
@@ -102,6 +126,8 @@ def getSubmitted(TOKEN):
 
 def ignoreSubmited(hws_json, TOKEN):
     submitted = getSubmitted(TOKEN)
+    if submitted == None:
+        return hws_json
     for hw in hws_json:
         if hw in submitted:
             del hws_json[hw]
