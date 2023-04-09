@@ -23,9 +23,8 @@ def get_cal_events(token):
 
 
 # parse calendar events into a dictoionary
-def get_homework(calendar):
+def get_homework(calendar, time_delta):
     today = datetime.today()
-    time_delta = 7
     hws_json = {}
     for component in calendar.walk():
         if (component.name == "VEVENT") and (component.decoded("dtend") > datetime.now().astimezone()) and (
@@ -46,6 +45,16 @@ def get_homework(calendar):
     return hws_json
 
 
+
+def get_hw_info(hw, hws_json):
+    hws_json[hw]['DL_TIME'] = hws_json[hw]['END_TIME'] - datetime.now().astimezone(get_tz())
+    dl_time = hws_json[hw]['DL_TIME']
+    time = str(dl_time.days)+'+'+' '+str(round(dl_time.total_seconds()/3600, 2))
+    title = time+'  '+ hws_json[hw]['COURSE']
+    body = hw+'\n'+hws_json[hw]['DESCRIPTION']
+    return title, body
+
+
 # send notification to pushbullet
 def pushbullet_noti(title, body, TOKEN):
     msg = {
@@ -60,7 +69,7 @@ def pushbullet_noti(title, body, TOKEN):
         }
     
     resp = httpx.post('https://api.pushbullet.com/v2/pushes', data=json.dumps(msg), headers=headers)
-    
+
     if resp.status_code != 200:
         raise Exception('Error', resp.status_code)
     else:
@@ -68,11 +77,52 @@ def pushbullet_noti(title, body, TOKEN):
 
 
 
+def pushHistory(TOKEN):
+    resp = httpx.get('https://api.pushbullet.com/v2/pushes',headers={'Authorization': 'Bearer ' + TOKEN})
+    return resp.json()
+
+
+
+def getSubmitted(TOKEN):
+    pushes = pushHistory(TOKEN)
+    submitted = []
+    for push in pushes['pushes']:
+        try:
+            push['source_device_iden']
+            body = push['body']
+            if body.startswith('submit'):
+                id = body.split(' ')[1]
+                if id not in submitted:
+                    submitted.append(id)
+                    return submitted
+        except KeyError:
+            pass
+
+
+
+def ignoreSubmited(hws_json, TOKEN):
+    submitted = getSubmitted(TOKEN)
+    for hw in hws_json:
+        if hw in submitted:
+            del hws_json[hw]
+    return hws_json
+
+
 # delete all pushbullet notifications
-def deletePush(TOKEN):
+def deletePush(TOKEN, pushId=''):
     headers = {'Authorization': 'Bearer ' + TOKEN}
     try:
-        httpx.delete('https://api.pushbullet.com/v2/pushes',
+        httpx.delete(f'https://api.pushbullet.com/v2/pushes/{pushId}',
                     headers=headers, raise_for_status=True)
     except httpx.HTTPStatusError as exc:
         pushbullet_noti(exc, 'Error deleting push', TOKEN)
+
+
+
+def get_time_dl(seconds):
+    time_dl = 2000*1.0000062**seconds-1900
+    if time_dl > 86400:
+        time_dl = 86400
+    elif time_dl < 300:
+        time_dl = 300
+    return time_dl
